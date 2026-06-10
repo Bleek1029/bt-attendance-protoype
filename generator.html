@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Onboarding & QR Generator</title>
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
+    <style>
+        body {
+            font-family: 'Segoe UI', sans-serif;
+            background-color: #f4f6f9;
+            margin: 0;
+            padding: 40px 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        .creator-box {
+            background: white;
+            padding: 30px;
+            border-radius: 16px;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.05);
+            text-align: center;
+            max-width: 450px;
+            width: 100%;
+            margin-bottom: 30px;
+        }
+
+        h2 { color: #2c3e50; margin-top: 0; }
+        
+        input {
+            width: 85%;
+            padding: 12px;
+            font-size: 16px;
+            border: 2px solid #bdc3c7;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            text-align: center;
+        }
+
+        /* Camera Capture Elements Layout */
+        #camera-feed {
+            width: 100%;
+            max-height: 250px;
+            background: #2c3e50;
+            border-radius: 12px;
+            transform: scaleX(-1); /* Mirror view for natural alignment */
+        }
+
+        #captured-canvas {
+            width: 100%;
+            border-radius: 12px;
+            display: none;
+            margin-bottom: 15px;
+        }
+
+        .btn {
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            font-size: 15px;
+            font-weight: bold;
+            border-radius: 8px;
+            cursor: pointer;
+            margin: 5px;
+            transition: opacity 0.2s;
+        }
+        .btn-blue { background-color: #3498db; }
+        .btn-green { background-color: #2ecc71; width: 90%; margin-top: 15px; }
+        
+        /* The Printable Output Badge Frame */
+        .badge-card {
+            background: white;
+            border: 3px dashed #7f8c8d;
+            padding: 25px;
+            border-radius: 12px;
+            text-align: center;
+            width: 260px;
+        }
+
+        #qrcode { display: flex; justify-content: center; margin: 15px 0; }
+        .hidden { display: none !important; }
+        .status { color: #7f8c8d; font-size: 14px; margin: 10px 0; font-weight: bold;}
+    </style>
+</head>
+<body>
+
+    <div class="creator-box">
+        <h2>Register New Employee</h2>
+        
+        <input type="text" id="emp-name" placeholder="Enter Full Name">
+
+        <video id="camera-feed" autoplay playsinline></video>
+        <canvas id="captured-canvas"></canvas>
+
+        <div style="margin-top: 15px;">
+            <button class="btn btn-blue" onclick="captureSnapshot()">📸 Take Picture</button>
+            <button class="btn btn-blue" onclick="retakePhoto()">🔄 Retake</button>
+        </div>
+
+        <div id="upload-status" class="status"></div>
+
+        <button id="submit-btn" class="btn btn-green" onclick="registerEmployeeToDatabase()">Save & Generate Badge</button>
+    </div>
+
+    <div id="badge-container" class="badge-card hidden">
+        <h3 id="print-name" style="margin:0;">COMPANY NAME</h3>
+        <p id="badge-number" style="margin:5px 0 15px 0; color: #7f8c8d; font-weight:bold;">EMP-000</p>
+        <div id="qrcode"></div>
+        <small style="color: #bdc3c7; font-size: 11px;">Scan at front-door kiosk</small>
+    </div>
+
+    <script>
+        // 1. Establish App Configurations
+        const SUPABASE_URL = "https://xsjhorluhkkmsgsubozl.supabase.co"; 
+        const SUPABASE_ANON_KEY = "sb_publishable_tgevPkL0m9ooFUtGqc71Uw_jyobZ8OM"; 
+        const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+        const video = document.getElementById('camera-feed');
+        const canvas = document.getElementById('captured-canvas');
+        const statusDiv = document.getElementById('upload-status');
+        let imageBlob = null; // Holds the image file binary payload
+
+        // 2. Automatically spin up webcam access on page load
+        navigator.mediaDevices.getUserMedia({ video: { width: 300, height: 300 } })
+            .then(stream => { video.srcObject = stream; })
+            .catch(err => { alert("Camera access required for onboarding panel."); });
+
+        // 3. Freeze frame from video and output to canvas drawing
+        function captureSnapshot() {
+            const ctx = canvas.getContext('2d');
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            
+            // Draw current video frame onto canvas
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+            
+            // Swap display states
+            video.style.display = 'none';
+            canvas.style.display = 'block';
+
+            // Convert canvas rendering into an exportable JPEG blob file payload
+            canvas.toBlob((blob) => { imageBlob = blob; }, 'image/jpeg', 0.9);
+        }
+
+        function retakePhoto() {
+            video.style.display = 'block';
+            canvas.style.display = 'none';
+            imageBlob = null;
+        }
+
+        // 4. Core Pipeline Engine: Uploads photo, builds database record, builds QR
+        async function registerEmployeeToDatabase() {
+            const fullName = document.getElementById('emp-name').value.trim();
+            
+            if (!fullName) return alert("Please enter a name first.");
+            if (!imageBlob) return alert("Please take an employee photo first.");
+
+            statusDiv.innerText = "Uploading profile image...";
+
+            try {
+                // A. Auto-generate a unique randomized ID number (e.g., EMP-74920)
+                const generatedEmpID = "EMP-" + Math.floor(10000 + Math.random() * 90000);
+                const fileName = `${generatedEmpID}.jpg`;
+
+                // B. Upload image blob straight to your Supabase Public Storage bucket 
+                // Note: Make sure you created a public bucket called 'employee-photos' in Supabase!
+                const { data: storageData, error: storageError } = await supabase.storage
+                    .from('employee-photos')
+                    .upload(fileName, imageBlob, { contentType: 'image/jpeg', cacheControl: '3600' });
+
+                if (storageError) throw new Error("Storage Upload Failure: " + storageError.message);
+
+                // Get the public asset URL link string out of storage container
+                const { data: urlData } = supabase.storage.from('employee-photos').getPublicUrl(fileName);
+                const publicPhotoUrl = urlData.publicUrl;
+
+                statusDiv.innerText = "Saving employee records...";
+
+                // C. Insert data into your 'employees' table schema
+                const { data: newEmployee, error: dbError } = await supabase
+                    .from('employees')
+                    .insert([{
+                        name: fullName,
+                        employee_number: generatedEmpID,
+                        photo_url: publicPhotoUrl
+                    }])
+                    .select()
+                    .single();
+
+                if (dbError) throw new Error("Database insertion failed: " + dbError.message);
+
+                statusDiv.innerText = "Generating QR Badges...";
+
+                // D. Run qrcode.js configuration using the new custom employee number
+                const qrDiv = document.getElementById('qrcode');
+                qrDiv.innerHTML = ""; // reset
+                new QRCode(qrDiv, { text: generatedEmpID, width: 160, height: 160 });
+
+                // Unhide and populate the layout badging framework
+                document.getElementById('print-name').innerText = fullName.toUpperCase();
+                document.getElementById('badge-number').innerText = generatedEmpID;
+                document.getElementById('badge-container').classList.remove('hidden');
+                
+                statusDiv.innerText = "Registration complete!";
+                
+            } catch (err) {
+                statusDiv.innerText = "Error: " + err.message;
+                console.error(err);
+            }
+        }
+    </script>
+</body>
