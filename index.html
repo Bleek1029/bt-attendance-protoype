@@ -42,13 +42,15 @@
             text-align: center;
         }
 
-        /* Camera Capture Elements Layout */
+        /* FIXED FOR ANDROID: Responsive mobile viewport wrapper */
         #camera-feed {
             width: 100%;
-            max-height: 250px;
+            height: auto;
+            max-height: 300px;
             background: #2c3e50;
             border-radius: 12px;
-            transform: scaleX(-1); /* Mirror view for natural alignment */
+            object-fit: cover; /* Safely handles responsive widescreen ratios */
+            transform: scaleX(-1); /* Mirror view for natural selfie alignment */
         }
 
         #captured-canvas {
@@ -113,129 +115,134 @@
         <div id="qrcode"></div>
         <small style="color: #bdc3c7; font-size: 11px;">Scan at front-door kiosk</small>
     </div>
-<script>
-    // 1. Establish App Configurations
-    const SUPABASE_URL = "https://xsjhorluhkkmsgsubozl.supabase.co"; 
-    const SUPABASE_ANON_KEY = "sb_publishable_tgevPkL0m9ooFUtGqc71Uw_jyobZ8OM"; 
-    const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-    const video = document.getElementById('camera-feed');
-    const canvas = document.getElementById('captured-canvas');
-    const statusDiv = document.getElementById('upload-status');
-    let imageBlob = null; // Holds the image file binary payload
+    <script>
+        // 1. Establish App Configurations
+        const SUPABASE_URL = "https://xsjhorluhkkmsgsubozl.supabase.co"; 
+        const SUPABASE_ANON_KEY = "sb_publishable_tgevPkL0m9ooFUtGqc71Uw_jyobZ8OM"; 
+        const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-    // 2. EDITED: Mobile-optimized camera access with aggressive recovery fallbacks
-    function startCamera() {
-        navigator.mediaDevices.getUserMedia({ 
-            video: { 
-                width: { ideal: 640 }, 
-                height: { ideal: 640 }, 
-                facingMode: "user" // Default to selfie camera for onboarding
-            } 
-        })
-        .then(stream => { 
-            video.srcObject = stream; 
-        })
-        .catch(err => {
-            console.warn("First camera attempt failed, trying generic fallback...", err);
-            
-            // FALLBACK 1: Try running without strict dimensions (fixes old Android/iOS quirks)
-            navigator.mediaDevices.getUserMedia({ video: true })
-                .then(stream => { 
-                    video.srcObject = stream; 
-                })
-                .catch(fallbackErr => {
-                    console.error("All camera requests blocked.", fallbackErr);
-                    statusDiv.innerText = "Camera Blocked. Tap the lock/lion icon in your URL bar and set Camera to 'Allow'.";
-                    alert("Camera access denied. Please ensure you are testing via an HTTPS/Live server link and have lowered Brave's shields.");
-                });
-        });
-    }
+        const video = document.getElementById('camera-feed');
+        const canvas = document.getElementById('captured-canvas');
+        const statusDiv = document.getElementById('upload-status');
+        let imageBlob = null; 
 
-    // Initialize camera on script load
-    startCamera();
-
-    // 3. Freeze frame from video and output to canvas drawing
-    function captureSnapshot() {
-        const ctx = canvas.getContext('2d');
-        canvas.width = video.videoWidth || 640;
-        canvas.height = video.videoHeight || 640;
-        
-        // Draw current video frame onto canvas
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-        
-        // Swap display states
-        video.style.display = 'none';
-        canvas.style.display = 'block';
-
-        // Convert canvas rendering into an exportable JPEG blob file payload
-        canvas.toBlob((blob) => { imageBlob = blob; }, 'image/jpeg', 0.9);
-    }
-
-    function retakePhoto() {
-        video.style.display = 'block';
-        canvas.style.display = 'none';
-        imageBlob = null;
-    }
-
-    // 4. Core Pipeline Engine: Uploads photo, builds database record, builds QR
-    async function registerEmployeeToDatabase() {
-        const fullName = document.getElementById('emp-name').value.trim();
-        
-        if (!fullName) return alert("Please enter a name first.");
-        if (!imageBlob) return alert("Please take an employee photo first.");
-
-        statusDiv.innerText = "Uploading profile image...";
-
-        try {
-            // A. Auto-generate a unique randomized ID number (e.g., EMP-74920)
-            const generatedEmpID = "EMP-" + Math.floor(10000 + Math.random() * 90000);
-            const fileName = `${generatedEmpID}.jpg`;
-
-            // B. Upload image blob straight to your Supabase Public Storage bucket 
-            const { data: storageData, error: storageError } = await supabase.storage
-                .from('employee-photos')
-                .upload(fileName, imageBlob, { contentType: 'image/jpeg', cacheControl: '3600' });
-
-            if (storageError) throw new Error("Storage Upload Failure: " + storageError.message);
-
-            // Get the public asset URL link string out of storage container
-            const { data: urlData } = supabase.storage.from('employee-photos').getPublicUrl(fileName);
-            const publicPhotoUrl = urlData.publicUrl;
-
-            statusDiv.innerText = "Saving employee records...";
-
-            // C. Insert data into your 'employees' table schema
-            const { data: newEmployee, error: dbError } = await supabase
-                .from('employees')
-                .insert([{
-                    name: fullName,
-                    employee_number: generatedEmpID,
-                    photo_url: publicPhotoUrl
-                }])
-                .select()
-                .single();
-
-            if (dbError) throw new Error("Database insertion failed: " + dbError.message);
-
-            statusDiv.innerText = "Generating QR Badges...";
-
-            // D. Run qrcode.js configuration using the new custom employee number
-            const qrDiv = document.getElementById('qrcode');
-            qrDiv.innerHTML = ""; // reset
-            new QRCode(qrDiv, { text: generatedEmpID, width: 160, height: 160 });
-
-            // Unhide and populate the layout badging framework
-            document.getElementById('print-name').innerText = fullName.toUpperCase();
-            document.getElementById('badge-number').innerText = generatedEmpID;
-            document.getElementById('badge-container').classList.remove('hidden');
-            
-            statusDiv.innerText = "Registration complete!";
-            
-        } catch (err) {
-            statusDiv.innerText = "Error: " + err.message;
-            console.error(err);
+        // 2. FIXED FOR MOBILE CHROME: Standard aspect ratios to eliminate hardware crash errors
+        function startCamera() {
+            navigator.mediaDevices.getUserMedia({ 
+                video: { 
+                    facingMode: "user", // Front camera for portrait snaps
+                    width: { ideal: 1280 },
+                    height: { ideal: 720 } // Native 16:9 widescreen format
+                } 
+            })
+            .then(stream => { 
+                video.srcObject = stream; 
+                video.play().catch(e => console.error("Auto-play blocked:", e));
+            })
+            .catch(err => {
+                console.warn("Standard constraints failed. Running maximum fallback routine...", err);
+                
+                // ABSOLUTE FALLBACK: Accept any video hardware parameters available
+                navigator.mediaDevices.getUserMedia({ video: true })
+                    .then(stream => { 
+                        video.srcObject = stream; 
+                    })
+                    .catch(finalErr => {
+                        console.error("Camera completely inaccessible:", finalErr);
+                        statusDiv.innerText = "Error: Check site settings or try switching browser tabs.";
+                    });
+            });
         }
-    }
-</script>
+
+        // Boot camera immediately
+        startCamera();
+
+        // 3. FIXED FOR CANVAS: Captures native resolutions perfectly
+        function captureSnapshot() {
+            const ctx = canvas.getContext('2d');
+            
+            // Read active native width/height values from mobile feed pipeline
+            canvas.width = video.videoWidth || 640;
+            canvas.height = video.videoHeight || 480;
+            
+            // Draw current video frame onto canvas
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+            
+            // Swap display states
+            video.style.display = 'none';
+            canvas.style.display = 'block';
+
+            // Convert canvas rendering into an exportable JPEG blob file payload
+            canvas.toBlob((blob) => { imageBlob = blob; }, 'image/jpeg', 0.9);
+        }
+
+        function retakePhoto() {
+            video.style.display = 'block';
+            canvas.style.display = 'none';
+            imageBlob = null;
+        }
+
+        // 4. Core Pipeline Engine: Uploads photo, builds database record, builds QR
+        async function registerEmployeeToDatabase() {
+            const fullName = document.getElementById('emp-name').value.trim();
+            
+            if (!fullName) return alert("Please enter a name first.");
+            if (!imageBlob) return alert("Please take an employee photo first.");
+
+            statusDiv.innerText = "Uploading profile image...";
+
+            try {
+                // A. Auto-generate a unique randomized ID number (e.g., EMP-74920)
+                const generatedEmpID = "EMP-" + Math.floor(10000 + Math.random() * 90000);
+                const fileName = `${generatedEmpID}.jpg`;
+
+                // B. Upload image blob straight to your Supabase Public Storage bucket 
+                const { data: storageData, error: storageError } = await supabase.storage
+                    .from('employee-photos')
+                    .upload(fileName, imageBlob, { contentType: 'image/jpeg', cacheControl: '3600' });
+
+                if (storageError) throw new Error("Storage Upload Failure: " + storageError.message);
+
+                // Get the public asset URL link string out of storage container
+                const { data: urlData } = supabase.storage.from('employee-photos').getPublicUrl(fileName);
+                const publicPhotoUrl = urlData.publicUrl;
+
+                statusDiv.innerText = "Saving employee records...";
+
+                // C. Insert data into your 'employees' table schema
+                const { data: newEmployee, error: dbError } = await supabase
+                    .from('employees')
+                    .insert([{
+                        name: fullName,
+                        employee_number: generatedEmpID,
+                        photo_url: publicPhotoUrl
+                    }])
+                    .select()
+                    .single();
+
+                if (dbError) throw new Error("Database insertion failed: " + dbError.message);
+
+                statusDiv.innerText = "Generating QR Badges...";
+
+                // D. Run qrcode.js configuration using the new custom employee number
+                const qrDiv = document.getElementById('qrcode');
+                qrDiv.innerHTML = ""; // reset
+                new QRCode(qrDiv, { text: generatedEmpID, width: 160, height: 160 });
+
+                // Unhide and populate the layout badging framework
+                document.getElementById('print-name').innerText = fullName.toUpperCase();
+                document.getElementById('badge-number').innerText = generatedEmpID;
+                document.getElementById('badge-container').classList.remove('hidden');
+                
+                statusDiv.innerText = "Registration complete!";
+                
+            } catch (err) {
+                statusDiv.innerText = "Error: " + err.message;
+                console.error(err);
+            }
+        }
+    </script>
 </body>
+</html>
+
